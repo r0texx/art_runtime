@@ -986,6 +986,9 @@ void ProfileSaver::Start(const ProfileSaverOptions& options,
                          const std::vector<std::string>& code_paths,
                          const std::string& ref_profile_filename,
                          AppInfo::CodeType code_type) {
+
+  // SCANNER:
+  /*
   Runtime* const runtime = Runtime::Current();
   DCHECK(options.IsEnabled());
   DCHECK(runtime->GetJit() != nullptr);
@@ -1058,6 +1061,7 @@ void ProfileSaver::Start(const ProfileSaverOptions& options,
       "Profile saver thread");
 
   SetProfileSaverThreadPriority(profiler_pthread_, kProfileSaverPthreadPriority);
+  */
 }
 
 void ProfileSaver::Stop(bool dump_info) {

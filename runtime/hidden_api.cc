@@ -789,6 +789,13 @@ bool ShouldDenyAccessToMember(T* member,
   //
   // The check only applies to boot classpaths dex files.
   Runtime* runtime = Runtime::Current();
+  // SCANNER:
+  if (LIKELY(runtime->GetHiddenApiEnforcementPolicy() == EnforcementPolicy::kDisabled) &&
+      LIKELY(runtime->GetCorePlatformApiEnforcementPolicy() == EnforcementPolicy::kDisabled) &&
+      LIKELY(runtime->GetTestApiEnforcementPolicy() == EnforcementPolicy::kDisabled)) {
+    return false;
+  }
+
   if (UNLIKELY(runtime->IsAotCompiler())) {
     if (member->GetDeclaringClass()->IsBootStrapClassLoaded() &&
         runtime->GetClassLinker()->DenyAccessBasedOnPublicSdk(member)) {

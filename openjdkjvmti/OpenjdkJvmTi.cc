@@ -532,6 +532,14 @@ class JvmtiFunctions {
     return MethodUtil::GetLocalInstance(env, thread, depth, value_ptr);
   }
 
+
+  // SCANNER
+  static jvmtiError GetMethodAnnotationTypes(jvmtiEnv* env, jmethodID mid, jint* count, jclass** out_types) {
+    ENSURE_VALID_ENV(env);
+    return MethodUtil::GetMethodAnnotationTypes(env, mid, count, out_types);
+  }
+  //
+
   static jvmtiError GetLocalInt(jvmtiEnv* env,
                                 jthread thread,
                                 jint depth,
@@ -1659,6 +1667,7 @@ const jvmtiInterface_1 gJvmtiInterface = {
   JvmtiFunctions::GetOwnedMonitorStackDepthInfo,
   JvmtiFunctions::GetObjectSize,
   JvmtiFunctions::GetLocalInstance,
+  JvmtiFunctions::GetMethodAnnotationTypes,
 };
 
 };  // namespace openjdkjvmti

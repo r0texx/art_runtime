@@ -94,6 +94,10 @@ class MethodUtil {
 
   static jvmtiError GetLocalInstance(jvmtiEnv* env, jthread thread, jint depth, jobject* data);
 
+  // SCANNER
+  static jvmtiError GetMethodAnnotationTypes(jvmtiEnv* env, jmethodID mid, jint* count, jclass** out_types);
+  //
+
  private:
   static jvmtiError SetLocalVariableGeneric(jvmtiEnv* env,
                                             jthread thread,

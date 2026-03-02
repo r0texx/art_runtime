@@ -82,6 +82,8 @@
 #include "verifier/reg_type_cache.h"
 #include "verifier/method_verifier-inl.h"
 
+#include "base/locks.h"
+
 namespace openjdkjvmti {
 
 struct TiMethodCallback : public art::MethodCallback {
@@ -1221,6 +1223,90 @@ jvmtiError MethodUtil::GetLocalInstance([[maybe_unused]] jvmtiEnv* env,
   } else {
     return c.GetResult(data);
   }
+}
+
+static const art::dex::AnnotationSetItem* FindAnnotationSetForMethodFast(art::ArtMethod* method) REQUIRES_SHARED(art::Locks::mutator_lock_) {
+    if (method->IsProxyMethod()) {
+        return nullptr;
+    }
+    const art::DexFile* dex = method->GetDexFile();
+    const art::dex::ClassDef& class_def = method->GetClassDef();
+    const art::dex::AnnotationsDirectoryItem* dir = dex->GetAnnotationsDirectory(class_def);
+    if (dir == nullptr) {
+        return nullptr;
+    }
+    const art::dex::MethodAnnotationsItem* methods = dex->GetMethodAnnotations(dir);
+    if (methods == nullptr) {
+        return nullptr;
+    }
+    const uint32_t target_idx = method->GetDexMethodIndex();
+    const uint32_t n = dir->methods_size_;
+    for (uint32_t i = 0; i < n; ++i) {
+        if (methods[i].method_idx_ == target_idx) {
+            return dex->GetMethodAnnotationSetItem(methods[i]);
+        }
+    }
+    return nullptr;
+}
+
+jvmtiError MethodUtil::GetMethodAnnotationTypes(jvmtiEnv* env, jmethodID mid, jint* count, jclass** out_types) {
+    if (count == nullptr || out_types == nullptr || mid == nullptr) {
+        return ERR(INVALID_METHODID);
+    }
+    *count = 0;
+    *out_types = nullptr;
+
+    art::Thread* self = art::Thread::Current();
+    art::ScopedObjectAccess soa(self);
+
+    art::ArtMethod* method = art::jni::DecodeArtMethod(mid);
+    if (method == nullptr) {
+        return ERR(INVALID_METHODID);
+    }
+
+    const art::dex::AnnotationSetItem* set = FindAnnotationSetForMethodFast(method);
+    if (set == nullptr || set->size_ == 0) {
+        return OK;
+    }
+
+    const art::DexFile* dex = method->GetDexFile();
+    art::ClassLinker* cl = art::Runtime::Current()->GetClassLinker();
+
+    std::vector<jclass> out;
+    out.reserve(set->size_);
+
+    for (uint32_t i = 0; i < set->size_; ++i) {
+        const art::dex::AnnotationItem* item = dex->GetAnnotationItem(set, i);
+        if (item == nullptr) {
+            continue;
+        }
+
+        const uint8_t* p = item->annotation_;
+        const uint32_t type_idx_u = art::DecodeUnsignedLeb128(&p);
+        art::dex::TypeIndex type_idx(static_cast<uint16_t>(type_idx_u));
+        art::ObjPtr<art::mirror::Class> anno = cl->LookupResolvedType(type_idx, method);
+        if (anno == nullptr) {
+            if (self->IsExceptionPending()) {
+                self->ClearException();
+            }
+            continue;
+        }
+        out.push_back(soa.AddLocalReference<jclass>(anno));
+    }
+
+    if (out.empty()) {
+        return OK;
+    }
+
+    jclass* buf = nullptr;
+    jvmtiError err = env->Allocate(sizeof(jclass) * out.size(), reinterpret_cast<unsigned char**>(&buf));
+    if (err != OK) {
+        return err;
+    }
+    memcpy(buf, out.data(), out.size() * sizeof(jclass));
+    *count = static_cast<jint>(out.size());
+    *out_types = buf;
+    return OK;
 }
 
 #define FOR_JVMTI_JVALUE_TYPES(fn) \

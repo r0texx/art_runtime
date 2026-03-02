@@ -4044,9 +4044,6 @@ std::unique_ptr<Context> Thread::QuickDeliverException(bool skip_method_exit_cal
         return Deoptimize(DeoptimizationKind::kFullFrame,
                           /*single_frame=*/ false,
                           skip_method_exit_callbacks);
-      } else {
-        LOG(WARNING) << "Got a deoptimization request on un-deoptimizable method "
-                     << visitor.caller->PrettyMethod();
       }
     } else {
       // This is either top of call stack, or shadow frame.

@@ -1777,8 +1777,6 @@ bool Instrumentation::ShouldDeoptimizeCaller(Thread* self, ArtMethod** sp, size_
 
   if (needs_deopt) {
     if (!Runtime::Current()->IsAsyncDeoptimizeable(caller, caller_pc)) {
-      LOG(WARNING) << "Got a deoptimization request on un-deoptimizable method "
-                   << caller->PrettyMethod();
       return false;
     }
     return true;

@@ -1721,17 +1721,19 @@ bool Runtime::Init(RuntimeArgumentMap&& runtime_options_in) {
   // we only enable them if:
   // (a) runtime was started with a command line flag that enables the checks, or
   // (b) Zygote forked a new process that is not exempt (see ZygoteHooks).
-  hidden_api_policy_ = runtime_options.GetOrDefault(Opt::HiddenApiPolicy);
+  hidden_api_policy_ = hiddenapi::EnforcementPolicy::kDisabled;
   DCHECK_IMPLIES(is_zygote_, hidden_api_policy_ == hiddenapi::EnforcementPolicy::kDisabled);
 
   // Set core platform API enforcement policy. The checks are disabled by default and
   // can be enabled with a command line flag. AndroidRuntime will pass the flag if
   // a system property is set.
-  core_platform_api_policy_ = runtime_options.GetOrDefault(Opt::CorePlatformApiPolicy);
+  core_platform_api_policy_ = hiddenapi::EnforcementPolicy::kDisabled;
   if (core_platform_api_policy_ != hiddenapi::EnforcementPolicy::kDisabled) {
     LOG(INFO) << "Core platform API reporting enabled, enforcing="
         << (core_platform_api_policy_ == hiddenapi::EnforcementPolicy::kEnabled ? "true" : "false");
   }
+
+  test_api_policy_ = hiddenapi::EnforcementPolicy::kDisabled;
 
   // Dex2Oat's Runtime does not need the signal chain or the fault handler
   // and it passes the `NoSigChain` option to `Runtime` to indicate this.

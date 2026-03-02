@@ -199,6 +199,8 @@ class DumpCheckpoint final : public Closure {
   }
 
   void Run(Thread* thread) override {
+    // ====== SCANNER: DISABLED DIAGNOSTIC DUMPS ======
+    /*
     // Note thread and self may not be equal if thread was already suspended at the point of the
     // request.
     Thread* self = Thread::Current();
@@ -213,6 +215,8 @@ class DumpCheckpoint final : public Closure {
       os_.emplace(sort_key, std::move(local_os));
     }
     barrier_.Pass(self);
+    */
+    barrier_.Pass(Thread::Current());
   }
 
   // Called at the end to print all the dumps in sequential prioritized order.

@@ -567,6 +567,8 @@ void Trace::Start(const char* trace_filename,
                   TraceOutputMode output_mode,
                   TraceMode trace_mode,
                   int interval_us) {
+  // SCANNER:
+  /*
   std::unique_ptr<File> file(OS::CreateEmptyFileWriteOnly(trace_filename));
   if (file == nullptr) {
     std::string msg = android::base::StringPrintf("Unable to open trace file '%s'", trace_filename);
@@ -576,6 +578,7 @@ void Trace::Start(const char* trace_filename,
     return;
   }
   Start(std::move(file), buffer_size, flags, output_mode, trace_mode, interval_us);
+  */
 }
 
 void Trace::Start(int trace_fd,
@@ -584,6 +587,8 @@ void Trace::Start(int trace_fd,
                   TraceOutputMode output_mode,
                   TraceMode trace_mode,
                   int interval_us) {
+  // SCANNER:
+  /*
   if (trace_fd < 0) {
     std::string msg = android::base::StringPrintf("Unable to start tracing with invalid fd %d",
                                                   trace_fd);
@@ -592,8 +597,9 @@ void Trace::Start(int trace_fd,
     Thread::Current()->ThrowNewException("Ljava/lang/RuntimeException;", msg.c_str());
     return;
   }
-  std::unique_ptr<File> file(new File(trace_fd, /* path= */ "tracefile", /* check_usage= */ true));
+  std::unique_ptr<File> file(new File(trace_fd, / * path= * / "tracefile", / * check_usage= * / true));
   Start(std::move(file), buffer_size, flags, output_mode, trace_mode, interval_us);
+  */
 }
 
 void Trace::StartDDMS(size_t buffer_size,
@@ -614,6 +620,8 @@ void Trace::Start(std::unique_ptr<File>&& trace_file_in,
                   TraceOutputMode output_mode,
                   TraceMode trace_mode,
                   int interval_us) {
+  // SCANNER:
+  /*
   // We own trace_file now and are responsible for closing it. To account for error situations, use
   // a specialized unique_ptr to ensure we close it on the way out (if it hasn't been passed to a
   // Trace instance).
@@ -715,7 +723,7 @@ void Trace::Start(std::unique_ptr<File>&& trace_file_in,
           UseFastTraceListeners(the_trace_->GetClockSource()));
       runtime->GetInstrumentation()->EnableMethodTracing(kTracerInstrumentationKey,
                                                          the_trace_,
-                                                         /*needs_interpreter=*/false);
+                                                         / *needs_interpreter=* /false);
     }
   }
 
@@ -723,6 +731,7 @@ void Trace::Start(std::unique_ptr<File>&& trace_file_in,
   if (enable_stats) {
     runtime->SetStatsEnabled(true);
   }
+  */
 }
 
 void Trace::StopTracing(bool flush_entries) {

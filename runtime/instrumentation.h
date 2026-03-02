@@ -60,7 +60,7 @@ namespace instrumentation {
 // Do we want to deoptimize for method entry and exit listeners or just try to intercept
 // invocations? Deoptimization forces all code to run in the interpreter and considerably hurts the
 // application's performance.
-static constexpr bool kDeoptimizeForAccurateMethodEntryExitListeners = true;
+static constexpr bool kDeoptimizeForAccurateMethodEntryExitListeners = false; // SCANNER! Before: true
 
 // an optional frame is either Some(const ShadowFrame& current_frame) or None depending on if the
 // method being exited has a shadow-frame associed with the current stack frame. In cases where

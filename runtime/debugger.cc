@@ -138,6 +138,7 @@ bool Dbg::IsJdwpAllowed() {
 
 // Do we need to deoptimize the stack to handle an exception?
 bool Dbg::IsForcedInterpreterNeededForExceptionImpl(Thread* thread) {
+  /*
   // Deoptimization is required if at least one method in the stack needs it. However we
   // skip frames that will be unwound (thus not executed).
   bool needs_deoptimization = false;
@@ -174,11 +175,13 @@ bool Dbg::IsForcedInterpreterNeededForExceptionImpl(Thread* thread) {
         return true;
       },
       thread,
-      /* context= */ nullptr,
+      / * context= * / nullptr,
       art::StackVisitor::StackWalkKind::kIncludeInlinedFrames,
-      /* check_suspended */ true,
-      /* include_transitions */ true);
+      / * check_suspended * / true,
+      / * include_transitions * / true);
   return needs_deoptimization;
+  */
+  return false;
 }
 
 
