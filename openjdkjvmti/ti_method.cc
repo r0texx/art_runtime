@@ -35,6 +35,7 @@
 #include <type_traits>
 #include <variant>
 
+#include "android-base/logging.h"
 #include "android-base/macros.h"
 #include "arch/context.h"
 #include "art_jvmti.h"
