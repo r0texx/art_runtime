@@ -66,6 +66,21 @@ class ClassUtil {
                                       char** signature_ptr,
                                       char** generic_ptr);
 
+  static jvmtiError RuleIndexShouldReport(jvmtiEnv* env,
+                                          jclass klass,
+                                          jboolean* should_report_ptr);
+
+  static jvmtiError RuleIndexArgShouldReport(jvmtiEnv* env,
+                                             jthread thread,
+                                             jmethodID method,
+                                             jboolean is_method_exit,
+                                             jvalue return_value,
+                                             jboolean* should_report_ptr);
+
+  static jvmtiError RuleIndexLoad(jvmtiEnv* env,
+                                  const unsigned char* data,
+                                  jint len);
+
   static jvmtiError GetClassStatus(jvmtiEnv* env, jclass klass, jint* status_ptr);
 
   static jvmtiError GetClassLoader(jvmtiEnv* env, jclass klass, jobject* classloader_ptr);

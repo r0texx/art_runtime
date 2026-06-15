@@ -34,13 +34,18 @@
 #include "android-base/stringprintf.h"
 
 #include <mutex>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "art_jvmti.h"
 #include "base/array_ref.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "art_method-inl.h"
 #include "base/utils.h"
 #include "class_linker.h"
 #include "class_loader_utils.h"
@@ -69,6 +74,7 @@
 #include "mirror/reference-inl.h"
 #include "nativehelper/scoped_local_ref.h"
 #include "reflection.h"
+#include "rule_index.h"
 #include "runtime.h"
 #include "runtime_callbacks.h"
 #include "scoped_thread_state_change-inl.h"
@@ -683,6 +689,219 @@ jvmtiError ClassUtil::GetImplementedInterfaces(jvmtiEnv* env,
   *interface_count_ptr = static_cast<jint>(array_size);
   *interfaces_ptr = interface_array;
 
+  return ERR(NONE);
+}
+
+jvmtiError ClassUtil::RuleIndexShouldReport([[maybe_unused]] jvmtiEnv* env,
+                                            jclass jklass,
+                                            jboolean* should_report_ptr) {
+  if (should_report_ptr == nullptr) {
+    return ERR(NULL_POINTER);
+  }
+  if (!RuleIndex::Active() || jklass == nullptr) {
+    *should_report_ptr = JNI_TRUE;
+    return ERR(NONE);
+  }
+  art::ScopedObjectAccess soa(art::Thread::Current());
+  art::ObjPtr<art::mirror::Class> klass = soa.Decode<art::mirror::Class>(jklass);
+  *should_report_ptr =
+      (klass == nullptr || RuleIndex::MightMatch(klass)) ? JNI_TRUE : JNI_FALSE;
+  return ERR(NONE);
+}
+
+namespace {
+
+std::mutex g_regex_mutex;
+jclass g_pattern_class = nullptr;
+jmethodID g_pattern_compile = nullptr;
+jmethodID g_pattern_matcher = nullptr;
+jmethodID g_matcher_find = nullptr;
+jmethodID g_object_tostring = nullptr;
+bool g_regex_init_failed = false;
+std::unordered_map<std::string, jobject> g_pattern_cache;
+
+thread_local bool g_in_regex_call = false;
+
+bool EnsureRegexMethods(JNIEnv* env) {
+  if (g_pattern_class != nullptr) {
+    return true;
+  }
+  if (g_regex_init_failed) {
+    return false;
+  }
+  jclass pattern_cls = env->FindClass("java/util/regex/Pattern");
+  jclass matcher_cls = env->FindClass("java/util/regex/Matcher");
+  jclass object_cls = env->FindClass("java/lang/Object");
+  if (pattern_cls != nullptr && matcher_cls != nullptr && object_cls != nullptr) {
+    g_pattern_compile = env->GetStaticMethodID(
+        pattern_cls, "compile", "(Ljava/lang/String;)Ljava/util/regex/Pattern;");
+    g_pattern_matcher = env->GetMethodID(
+        pattern_cls, "matcher", "(Ljava/lang/CharSequence;)Ljava/util/regex/Matcher;");
+    g_matcher_find = env->GetMethodID(matcher_cls, "find", "()Z");
+    g_object_tostring = env->GetMethodID(object_cls, "toString", "()Ljava/lang/String;");
+  }
+  if (env->ExceptionCheck()) {
+    env->ExceptionClear();
+  }
+  if (pattern_cls == nullptr || matcher_cls == nullptr || object_cls == nullptr
+      || g_pattern_compile == nullptr || g_pattern_matcher == nullptr || g_matcher_find == nullptr
+      || g_object_tostring == nullptr) {
+    g_regex_init_failed = true;
+  } else {
+    g_pattern_class = reinterpret_cast<jclass>(env->NewGlobalRef(pattern_cls));
+    g_regex_init_failed = (g_pattern_class == nullptr);
+  }
+  if (pattern_cls != nullptr) {
+    env->DeleteLocalRef(pattern_cls);
+  }
+  if (matcher_cls != nullptr) {
+    env->DeleteLocalRef(matcher_cls);
+  }
+  if (object_cls != nullptr) {
+    env->DeleteLocalRef(object_cls);
+  }
+  return !g_regex_init_failed;
+}
+
+jobject GetCompiledPattern(JNIEnv* env, const std::string& pattern) {
+  std::lock_guard<std::mutex> lock(g_regex_mutex);
+  auto it = g_pattern_cache.find(pattern);
+  if (it != g_pattern_cache.end()) {
+    return it->second;
+  }
+  jobject result = nullptr;
+  if (EnsureRegexMethods(env)) {
+    jstring jpat = env->NewStringUTF(pattern.c_str());
+    if (jpat != nullptr) {
+      g_in_regex_call = true;
+      jobject local = env->CallStaticObjectMethod(g_pattern_class, g_pattern_compile, jpat);
+      g_in_regex_call = false;
+      if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        local = nullptr;
+      }
+      if (local != nullptr) {
+        result = env->NewGlobalRef(local);
+        env->DeleteLocalRef(local);
+      }
+      env->DeleteLocalRef(jpat);
+    } else if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+    }
+  }
+  g_pattern_cache[pattern] = result;
+  return result;
+}
+
+bool EvalPendingRegex(JNIEnv* env, const std::vector<std::pair<std::string, jobject>>& pending) {
+  for (const std::pair<std::string, jobject>& pr : pending) {
+    jobject pattern = GetCompiledPattern(env, pr.first);
+    if (pattern == nullptr) {
+      return true;
+    }
+    jobject value = nullptr;
+    if (pr.second != nullptr) {
+      value = env->CallObjectMethod(pr.second, g_object_tostring);
+      if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return true;
+      }
+    }
+    if (value == nullptr) {
+      return true;
+    }
+    g_in_regex_call = true;
+    jobject matcher = env->CallObjectMethod(pattern, g_pattern_matcher, value);
+    bool error = env->ExceptionCheck();
+    bool matched = false;
+    if (!error && matcher != nullptr) {
+      jboolean found = env->CallBooleanMethod(matcher, g_matcher_find);
+      error = env->ExceptionCheck();
+      matched = (!error && found == JNI_TRUE);
+    }
+    g_in_regex_call = false;
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+    }
+    if (matcher != nullptr) {
+      env->DeleteLocalRef(matcher);
+    }
+    env->DeleteLocalRef(value);
+    if (error || matched) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}
+
+jvmtiError ClassUtil::RuleIndexArgShouldReport([[maybe_unused]] jvmtiEnv* env,
+                                               [[maybe_unused]] jthread thread,
+                                               jmethodID method,
+                                               jboolean is_method_exit,
+                                               jvalue return_value,
+                                               jboolean* should_report_ptr) {
+  if (should_report_ptr == nullptr) {
+    return ERR(NULL_POINTER);
+  }
+  if (!RuleIndex::ArgActive() || method == nullptr) {
+    *should_report_ptr = JNI_TRUE;
+    return ERR(NONE);
+  }
+
+  static thread_local bool in_gate = false;
+  if (in_gate) {
+    *should_report_ptr = g_in_regex_call ? JNI_FALSE : JNI_TRUE;
+    return ERR(NONE);
+  }
+  in_gate = true;
+
+  art::Thread* self = art::Thread::Current();
+  bool forward = true;
+  std::vector<std::pair<std::string, jobject>> pending;
+  {
+    art::ScopedObjectAccess soa(self);
+    art::ArtMethod* art_method = art::jni::DecodeArtMethod(method);
+    if (art_method != nullptr) {
+      bool return_is_ref = false;
+      art::ObjPtr<art::mirror::Object> return_obj;
+      if (is_method_exit != JNI_FALSE) {
+        const char* shorty = art_method->GetShorty();
+        if (shorty != nullptr && shorty[0] == 'L') {
+          return_is_ref = true;
+          if (return_value.l != nullptr) {
+            return_obj = soa.Decode<art::mirror::Object>(return_value.l);
+          }
+        }
+      }
+      forward = RuleIndex::ArgsMightMatch(art_method, return_obj, return_is_ref,
+                                          is_method_exit != JNI_FALSE, &pending);
+    }
+  }
+
+  JNIEnv* jni = self->GetJniEnv();
+  if (!forward && !pending.empty()) {
+    forward = EvalPendingRegex(jni, pending);
+  }
+  for (const std::pair<std::string, jobject>& pr : pending) {
+    if (pr.second != nullptr) {
+      jni->DeleteLocalRef(pr.second);
+    }
+  }
+  RuleIndex::RecordArgDecision(forward);
+  in_gate = false;
+  *should_report_ptr = forward ? JNI_TRUE : JNI_FALSE;
+  return ERR(NONE);
+}
+
+jvmtiError ClassUtil::RuleIndexLoad([[maybe_unused]] jvmtiEnv* env,
+                                    const unsigned char* data,
+                                    jint len) {
+  if (data == nullptr || len < 0) {
+    return ERR(NULL_POINTER);
+  }
+  RuleIndex::LoadFromBuffer(data, static_cast<size_t>(len));
   return ERR(NONE);
 }
 

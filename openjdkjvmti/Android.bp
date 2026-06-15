@@ -71,6 +71,7 @@ cc_defaults {
         "events.cc",
         "object_tagging.cc",
         "OpenjdkJvmTi.cc",
+        "rule_index.cc",
         "ti_allocator.cc",
         "ti_breakpoint.cc",
         "ti_class.cc",

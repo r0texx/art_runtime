@@ -54,6 +54,7 @@
 #include "thread_list.h"
 #include "ti_allocator.h"
 #include "ti_breakpoint.h"
+#include "rule_index.h"
 #include "ti_class.h"
 #include "ti_dump.h"
 #include "ti_extension.h"
@@ -537,6 +538,24 @@ class JvmtiFunctions {
   static jvmtiError GetMethodAnnotationTypes(jvmtiEnv* env, jmethodID mid, jint* count, jclass** out_types) {
     ENSURE_VALID_ENV(env);
     return MethodUtil::GetMethodAnnotationTypes(env, mid, count, out_types);
+  }
+
+  static jvmtiError RuleIndexShouldReport(jvmtiEnv* env, jclass klass, jboolean* should_report) {
+    ENSURE_VALID_ENV(env);
+    return ClassUtil::RuleIndexShouldReport(env, klass, should_report);
+  }
+
+  static jvmtiError RuleIndexArgShouldReport(jvmtiEnv* env, jthread thread, jmethodID method,
+                                             jboolean is_method_exit, jvalue return_value,
+                                             jboolean* should_report) {
+    ENSURE_VALID_ENV(env);
+    return ClassUtil::RuleIndexArgShouldReport(env, thread, method, is_method_exit, return_value,
+                                               should_report);
+  }
+
+  static jvmtiError RuleIndexLoad(jvmtiEnv* env, const unsigned char* data, jint len) {
+    ENSURE_VALID_ENV(env);
+    return ClassUtil::RuleIndexLoad(env, data, len);
   }
   //
 
@@ -1668,6 +1687,9 @@ const jvmtiInterface_1 gJvmtiInterface = {
   JvmtiFunctions::GetObjectSize,
   JvmtiFunctions::GetLocalInstance,
   JvmtiFunctions::GetMethodAnnotationTypes,
+  JvmtiFunctions::RuleIndexShouldReport,
+  JvmtiFunctions::RuleIndexArgShouldReport,
+  JvmtiFunctions::RuleIndexLoad,
 };
 
 };  // namespace openjdkjvmti
