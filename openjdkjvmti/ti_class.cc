@@ -33,7 +33,9 @@
 
 #include "android-base/stringprintf.h"
 
+#include <memory>
 #include <mutex>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -712,120 +714,82 @@ jvmtiError ClassUtil::RuleIndexShouldReport([[maybe_unused]] jvmtiEnv* env,
 namespace {
 
 std::mutex g_regex_mutex;
-jclass g_pattern_class = nullptr;
-jmethodID g_pattern_compile = nullptr;
-jmethodID g_pattern_matcher = nullptr;
-jmethodID g_matcher_find = nullptr;
 jmethodID g_object_tostring = nullptr;
-bool g_regex_init_failed = false;
-std::unordered_map<std::string, jobject> g_pattern_cache;
+bool g_tostring_init_failed = false;
+std::unordered_map<std::string, std::unique_ptr<std::regex>> g_regex_cache;
 
-thread_local bool g_in_regex_call = false;
-
-bool EnsureRegexMethods(JNIEnv* env) {
-  if (g_pattern_class != nullptr) {
+bool EnsureToStringMethod(JNIEnv* env) {
+  if (g_object_tostring != nullptr) {
     return true;
   }
-  if (g_regex_init_failed) {
+  if (g_tostring_init_failed) {
     return false;
   }
-  jclass pattern_cls = env->FindClass("java/util/regex/Pattern");
-  jclass matcher_cls = env->FindClass("java/util/regex/Matcher");
   jclass object_cls = env->FindClass("java/lang/Object");
-  if (pattern_cls != nullptr && matcher_cls != nullptr && object_cls != nullptr) {
-    g_pattern_compile = env->GetStaticMethodID(
-        pattern_cls, "compile", "(Ljava/lang/String;)Ljava/util/regex/Pattern;");
-    g_pattern_matcher = env->GetMethodID(
-        pattern_cls, "matcher", "(Ljava/lang/CharSequence;)Ljava/util/regex/Matcher;");
-    g_matcher_find = env->GetMethodID(matcher_cls, "find", "()Z");
+  if (object_cls != nullptr) {
     g_object_tostring = env->GetMethodID(object_cls, "toString", "()Ljava/lang/String;");
+    env->DeleteLocalRef(object_cls);
   }
   if (env->ExceptionCheck()) {
     env->ExceptionClear();
   }
-  if (pattern_cls == nullptr || matcher_cls == nullptr || object_cls == nullptr
-      || g_pattern_compile == nullptr || g_pattern_matcher == nullptr || g_matcher_find == nullptr
-      || g_object_tostring == nullptr) {
-    g_regex_init_failed = true;
-  } else {
-    g_pattern_class = reinterpret_cast<jclass>(env->NewGlobalRef(pattern_cls));
-    g_regex_init_failed = (g_pattern_class == nullptr);
-  }
-  if (pattern_cls != nullptr) {
-    env->DeleteLocalRef(pattern_cls);
-  }
-  if (matcher_cls != nullptr) {
-    env->DeleteLocalRef(matcher_cls);
-  }
-  if (object_cls != nullptr) {
-    env->DeleteLocalRef(object_cls);
-  }
-  return !g_regex_init_failed;
+  g_tostring_init_failed = (g_object_tostring == nullptr);
+  return !g_tostring_init_failed;
 }
 
-jobject GetCompiledPattern(JNIEnv* env, const std::string& pattern) {
+const std::regex* GetCompiledRegex(const std::string& pattern) {
   std::lock_guard<std::mutex> lock(g_regex_mutex);
-  auto it = g_pattern_cache.find(pattern);
-  if (it != g_pattern_cache.end()) {
-    return it->second;
+  auto it = g_regex_cache.find(pattern);
+  if (it != g_regex_cache.end()) {
+    return it->second.get();
   }
-  jobject result = nullptr;
-  if (EnsureRegexMethods(env)) {
-    jstring jpat = env->NewStringUTF(pattern.c_str());
-    if (jpat != nullptr) {
-      g_in_regex_call = true;
-      jobject local = env->CallStaticObjectMethod(g_pattern_class, g_pattern_compile, jpat);
-      g_in_regex_call = false;
-      if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-        local = nullptr;
-      }
-      if (local != nullptr) {
-        result = env->NewGlobalRef(local);
-        env->DeleteLocalRef(local);
-      }
-      env->DeleteLocalRef(jpat);
-    } else if (env->ExceptionCheck()) {
-      env->ExceptionClear();
-    }
+  std::unique_ptr<std::regex> compiled;
+  try {
+    compiled = std::make_unique<std::regex>(pattern,
+                                            std::regex::ECMAScript | std::regex::optimize);
+  } catch (const std::regex_error& e) {
+    LOG(WARNING) << "DAST RuleIndex: invalid regex '" << pattern << "': " << e.what();
+    compiled.reset();
   }
-  g_pattern_cache[pattern] = result;
+  const std::regex* result = compiled.get();
+  g_regex_cache.emplace(pattern, std::move(compiled));
   return result;
 }
 
 bool EvalPendingRegex(JNIEnv* env, const std::vector<std::pair<std::string, jobject>>& pending) {
   for (const std::pair<std::string, jobject>& pr : pending) {
-    jobject pattern = GetCompiledPattern(env, pr.first);
+    const std::regex* pattern = GetCompiledRegex(pr.first);
     if (pattern == nullptr) {
       return true;
     }
-    jobject value = nullptr;
-    if (pr.second != nullptr) {
-      value = env->CallObjectMethod(pr.second, g_object_tostring);
-      if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-        return true;
-      }
+    if (pr.second == nullptr || !EnsureToStringMethod(env)) {
+      return true;
+    }
+    jobject value = env->CallObjectMethod(pr.second, g_object_tostring);
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+      return true;
     }
     if (value == nullptr) {
       return true;
     }
-    g_in_regex_call = true;
-    jobject matcher = env->CallObjectMethod(pattern, g_pattern_matcher, value);
-    bool error = env->ExceptionCheck();
+    jstring jstr = reinterpret_cast<jstring>(value);
+    const char* chars = env->GetStringUTFChars(jstr, nullptr);
+    if (chars == nullptr) {
+      if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+      }
+      env->DeleteLocalRef(value);
+      return true;
+    }
     bool matched = false;
-    if (!error && matcher != nullptr) {
-      jboolean found = env->CallBooleanMethod(matcher, g_matcher_find);
-      error = env->ExceptionCheck();
-      matched = (!error && found == JNI_TRUE);
+    bool error = false;
+    try {
+      matched = std::regex_search(chars, *pattern);
+    } catch (const std::regex_error&) {
+      error = true;
     }
-    g_in_regex_call = false;
-    if (env->ExceptionCheck()) {
-      env->ExceptionClear();
-    }
-    if (matcher != nullptr) {
-      env->DeleteLocalRef(matcher);
-    }
+    env->ReleaseStringUTFChars(jstr, chars);
     env->DeleteLocalRef(value);
     if (error || matched) {
       return true;
@@ -852,7 +816,7 @@ jvmtiError ClassUtil::RuleIndexArgShouldReport([[maybe_unused]] jvmtiEnv* env,
 
   static thread_local bool in_gate = false;
   if (in_gate) {
-    *should_report_ptr = g_in_regex_call ? JNI_FALSE : JNI_TRUE;
+    *should_report_ptr = JNI_TRUE;
     return ERR(NONE);
   }
   in_gate = true;
