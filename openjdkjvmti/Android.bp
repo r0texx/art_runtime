@@ -65,6 +65,8 @@ cc_defaults {
     name: "libopenjdkjvmti_defaults",
     defaults: ["art_defaults"],
     host_supported: true,
+    // Needed so std::regex can throw/catch std::regex_error on invalid patterns.
+    cppflags: ["-fexceptions"],
     srcs: [
         "alloc_manager.cc",
         "deopt_manager.cc",
