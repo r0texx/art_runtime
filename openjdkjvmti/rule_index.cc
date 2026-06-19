@@ -638,6 +638,7 @@ bool RuleIndex::MightMatch(art::ObjPtr<art::mirror::Class> klass) {
 
   const bool result = (reason != kReasonNone);
 
+  /* RuleIndex stats logging disabled
   static std::atomic<uint64_t> g_reason_counts[kReasonCount] = {};
   static std::atomic<uint64_t> g_dropped{0};
   static std::atomic<uint64_t> g_total{0};
@@ -647,7 +648,7 @@ bool RuleIndex::MightMatch(art::ObjPtr<art::mirror::Class> klass) {
     g_dropped.fetch_add(1, std::memory_order_relaxed);
   }
   const uint64_t total = g_total.fetch_add(1, std::memory_order_relaxed) + 1;
-  if (total == 1 || total % 5000 == 0) {
+  if (total == 1 || total % 500 == 0) {
     const uint64_t exact = g_reason_counts[kReasonClassExact].load(std::memory_order_relaxed);
     const uint64_t prefix = g_reason_counts[kReasonClassPrefix].load(std::memory_order_relaxed);
     const uint64_t substr = g_reason_counts[kReasonClassSubstring].load(std::memory_order_relaxed);
@@ -663,6 +664,7 @@ bool RuleIndex::MightMatch(art::ObjPtr<art::mirror::Class> klass) {
                  << " unresolved=" << unresolved << "]"
                  << " dropped(negFilter)=" << dropped;
   }
+  */
   return result;
 }
 
@@ -755,6 +757,8 @@ bool RuleIndex::ArgsMightMatch(art::ArtMethod* method,
 }
 
 void RuleIndex::RecordArgDecision(bool forward) {
+  (void)forward;
+  /* RuleIndex arg stats logging disabled
   static std::atomic<uint64_t> g_arg_forwarded{0};
   static std::atomic<uint64_t> g_arg_dropped{0};
   if (forward) {
@@ -765,10 +769,11 @@ void RuleIndex::RecordArgDecision(bool forward) {
   const uint64_t fwd = g_arg_forwarded.load(std::memory_order_relaxed);
   const uint64_t drp = g_arg_dropped.load(std::memory_order_relaxed);
   const uint64_t total = fwd + drp;
-  if (total == 1 || total % 5000 == 0) {
+  if (total == 1 || total % 500 == 0) {
     LOG(WARNING) << "DAST RuleIndex arg totals: triggers=" << total << " forwarded=" << fwd
                  << " dropped(inProcess)=" << drp;
   }
+  */
 }
 
 }

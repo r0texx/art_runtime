@@ -694,6 +694,11 @@ jvmtiError ClassUtil::GetImplementedInterfaces(jvmtiEnv* env,
   return ERR(NONE);
 }
 
+// TEMP: verbose RuleIndex drop logging (remove after debugging)
+// static void RuleIndexLogDrop(const char* kind, const std::string& detail) {
+//   LOG(WARNING) << "DAST RuleIndex DROP " << kind << ": " << detail;
+// }
+
 jvmtiError ClassUtil::RuleIndexShouldReport([[maybe_unused]] jvmtiEnv* env,
                                             jclass jklass,
                                             jboolean* should_report_ptr) {
@@ -706,8 +711,14 @@ jvmtiError ClassUtil::RuleIndexShouldReport([[maybe_unused]] jvmtiEnv* env,
   }
   art::ScopedObjectAccess soa(art::Thread::Current());
   art::ObjPtr<art::mirror::Class> klass = soa.Decode<art::mirror::Class>(jklass);
-  *should_report_ptr =
-      (klass == nullptr || RuleIndex::MightMatch(klass)) ? JNI_TRUE : JNI_FALSE;
+  bool forward = (klass == nullptr || RuleIndex::MightMatch(klass));
+  // if (!forward) {
+  //   art::ObjPtr<art::mirror::Class> k = soa.Decode<art::mirror::Class>(jklass);
+  //   if (k != nullptr) {
+  //     RuleIndexLogDrop("class-load", k->PrettyDescriptor());
+  //   }
+  // }
+  *should_report_ptr = forward ? JNI_TRUE : JNI_FALSE;
   return ERR(NONE);
 }
 
@@ -737,18 +748,52 @@ bool EnsureToStringMethod(JNIEnv* env) {
   return !g_tostring_init_failed;
 }
 
+// std::regex (ECMAScript) cannot parse Java-style inline flags like "(?i)" that
+// Pattern.toString() emits. Translate leading flag group(s) into std::regex flags
+// and strip them from the pattern; scoped/real groups are left untouched.
+std::regex::flag_type ExtractLeadingInlineFlags(std::string* pattern) {
+  std::regex::flag_type flags = std::regex::ECMAScript | std::regex::nosubs;
+  while (pattern->size() >= 4 && (*pattern)[0] == '(' && (*pattern)[1] == '?') {
+    size_t close = pattern->find(')');
+    if (close == std::string::npos || close <= 2) {
+      break;
+    }
+    bool only_flags = true;
+    bool has_i = false;
+    for (size_t i = 2; i < close; i++) {
+      char c = (*pattern)[i];
+      if (c == 'i') {
+        has_i = true;
+      } else if (c != 'm' && c != 's' && c != 'u' && c != 'x' && c != 'U' && c != 'd') {
+        only_flags = false;
+        break;
+      }
+    }
+    if (!only_flags) {
+      break;
+    }
+    if (has_i) {
+      flags |= std::regex::icase;
+    }
+    pattern->erase(0, close + 1);
+  }
+  return flags;
+}
+
 const std::regex* GetCompiledRegex(const std::string& pattern) {
   std::lock_guard<std::mutex> lock(g_regex_mutex);
   auto it = g_regex_cache.find(pattern);
   if (it != g_regex_cache.end()) {
     return it->second.get();
   }
+  std::string work = pattern;
+  std::regex::flag_type flags = ExtractLeadingInlineFlags(&work);
   std::unique_ptr<std::regex> compiled;
   try {
-    compiled = std::make_unique<std::regex>(pattern,
-                                            std::regex::ECMAScript | std::regex::optimize);
+    compiled = std::make_unique<std::regex>(work, flags);
   } catch (const std::regex_error& e) {
-    LOG(WARNING) << "DAST RuleIndex: invalid regex '" << pattern << "': " << e.what();
+    // LOG(WARNING) << "DAST RuleIndex: invalid regex '" << pattern << "': " << e.what();
+    (void)e;
     compiled.reset();
   }
   const std::regex* result = compiled.get();
@@ -823,11 +868,13 @@ jvmtiError ClassUtil::RuleIndexArgShouldReport([[maybe_unused]] jvmtiEnv* env,
 
   art::Thread* self = art::Thread::Current();
   bool forward = true;
+  // std::string method_pretty;
   std::vector<std::pair<std::string, jobject>> pending;
   {
     art::ScopedObjectAccess soa(self);
     art::ArtMethod* art_method = art::jni::DecodeArtMethod(method);
     if (art_method != nullptr) {
+      // method_pretty = art_method->PrettyMethod(true);
       bool return_is_ref = false;
       art::ObjPtr<art::mirror::Object> return_obj;
       if (is_method_exit != JNI_FALSE) {
@@ -854,6 +901,9 @@ jvmtiError ClassUtil::RuleIndexArgShouldReport([[maybe_unused]] jvmtiEnv* env,
     }
   }
   RuleIndex::RecordArgDecision(forward);
+  // if (!forward && !method_pretty.empty()) {
+  //   RuleIndexLogDrop(is_method_exit != JNI_FALSE ? "method-exit" : "breakpoint", method_pretty);
+  // }
   in_gate = false;
   *should_report_ptr = forward ? JNI_TRUE : JNI_FALSE;
   return ERR(NONE);

@@ -21,6 +21,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#ifdef __APPLE__
+#define lseek64 lseek
+#endif
 #include <zlib.h>
 
 #include <algorithm>
